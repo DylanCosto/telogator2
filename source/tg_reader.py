@@ -61,7 +61,7 @@ class TG_Reader:
     #
     # returns (readname, readsequence, qualitysequence, is_supplementary)
     #
-    def get_next_read(self):
+    def get_next_read(self, with_quality=True):
         if self.filetype == 'FASTQ':
             my_name = self.f.readline().strip()[1:]
             if not my_name:
@@ -71,6 +71,8 @@ class TG_Reader:
             my_read = self.f.readline().strip()
             _       = self.f.readline().strip()
             my_qual = self.f.readline().strip()
+            if not with_quality:
+                my_qual = ''
             return (my_name, my_read, my_qual, False)
         #
         elif self.filetype == 'FASTA':
@@ -102,7 +104,8 @@ class TG_Reader:
         elif self.filetype in ['BAM', 'CRAM']:
             try:
                 aln = next(self.alns)
-                return (aln.qname, aln.query_sequence, aln.qual, aln.is_supplementary)
+                return (aln.qname, aln.query_sequence,
+                        aln.qual if with_quality else '', aln.is_supplementary)
             # we reached the end of file
             except StopIteration:
                 return ('','','',False)
@@ -223,7 +226,7 @@ def extract_telomere_reads(input_files, output_file, kmer, reverse_kmer,
             reader = TG_Reader(input_file, verbose=False, ref_fasta=ref_fasta)
             try:
                 while True:
-                    name, sequence, _, is_supplementary = reader.get_next_read()
+                    name, sequence, _, is_supplementary = reader.get_next_read(with_quality=False)
                     if not name:
                         break
                     if not sequence:
