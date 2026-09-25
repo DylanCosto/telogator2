@@ -5,6 +5,8 @@ from collections import deque
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import nullcontext
 
+_BGZF_EOF = bytes.fromhex('1f8b08040000000000ff0600424302001b0003000000000000000000')
+
 #
 # accepts fq / fq.gz / fa / fa.gz / bam / cram
 #
@@ -13,7 +15,8 @@ from contextlib import nullcontext
 
 
 class TG_Reader:
-    def __init__(self, input_filename, replace_tabs_with_spaces=True, verbose=True, ref_fasta=''):
+    def __init__(self, input_filename, replace_tabs_with_spaces=True, verbose=True,
+                 ref_fasta='', bam_threads=1):
         self.replace_tabs_with_spaces = replace_tabs_with_spaces
         self.verbose = verbose
         fnl = input_filename.lower()
@@ -35,7 +38,18 @@ class TG_Reader:
             if self.verbose:
                 print('getting reads from ' + self.filetype + '...')
             if self.filetype == 'BAM':
-                self.f = pysam.AlignmentFile(input_filename, "rb", ignore_truncation=True, check_sq=False)
+                # pysam cannot combine threaded decoding with ignore_truncation.
+                # Keep the original tolerant reader for BAMs without an EOF block.
+                if bam_threads > 1:
+                    try:
+                        with open(input_filename, 'rb') as bam:
+                            bam.seek(-len(_BGZF_EOF), 2)
+                            if bam.read() != _BGZF_EOF:
+                                bam_threads = 1
+                    except OSError:
+                        bam_threads = 1
+                self.f = pysam.AlignmentFile(input_filename, "rb", ignore_truncation=bam_threads == 1,
+                                             check_sq=False, threads=bam_threads)
             else:
                 if ref_fasta == '': # cram without reference will almost certainly break, but try anyway
                     print()
@@ -223,7 +237,8 @@ def extract_telomere_reads(input_files, output_file, kmer, reverse_kmer,
                           else gzip.open(output_file, 'wt'))
     with pool as executor, output_file_handle as output:
         for input_file in input_files:
-            reader = TG_Reader(input_file, verbose=False, ref_fasta=ref_fasta)
+            reader = TG_Reader(input_file, verbose=False, ref_fasta=ref_fasta,
+                               bam_threads=num_processes)
             try:
                 while True:
                     name, sequence, _, is_supplementary = reader.get_next_read(with_quality=False)
