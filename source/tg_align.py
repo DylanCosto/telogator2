@@ -4,7 +4,7 @@ import time
 
 from Bio.Align          import PairwiseAligner, substitution_matrices
 from collections        import Counter, defaultdict
-from concurrent.futures import as_completed, FIRST_COMPLETED, ProcessPoolExecutor, wait
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from itertools          import combinations, count, zip_longest
 
 from source.tg_util import shuffle_seq
@@ -212,7 +212,7 @@ def progressive_alignment(sequences, distance_matrix, aligner, num_processes=1):
     def align_to_profile_parallel(sequence, profile):
         with ProcessPoolExecutor(max_workers=num_processes) as executor:
             future_alignments = [executor.submit(pairwise_align, seq, sequence, aligner) for seq, _ in profile]
-            alignments = [future.result() for future in as_completed(future_alignments)]
+            alignments = [future.result() for future in future_alignments]
         max_len = max(len(n[0]) for n in alignments)
         padded_profile = [(a[0].ljust(max_len, '-'), idx) for (a, idx) in zip(alignments, [idx for _, idx in profile])]
         padded_profile.append((alignments[0][1].ljust(max_len, '-'), len(sequences) - 1))
