@@ -127,7 +127,8 @@ class TG_Reader:
     #
     def get_next_read(self, with_quality=True, defer_methylation=False):
         # Opt-in for sequence screening: BAM/CRAM return the alignment in the
-        # methylation slot, so callers can decode only reads they retain.
+        # methylation slot only when both MM and ML tags exist, otherwise None.
+        # Callers can then decode only reads they retain.
         # The default payload and FASTA/FASTQ behavior are unchanged.
         if self.filetype == 'FASTQ':
             my_name = self.f.readline().strip()[1:]
@@ -171,7 +172,11 @@ class TG_Reader:
         elif self.filetype in ['BAM', 'CRAM']:
             try:
                 aln = next(self.alns)
-                return (aln.qname, aln.query_sequence, aln.qual if with_quality else '', aln.is_supplementary, aln if defer_methylation else self.extract_methylation(aln))
+                if defer_methylation:
+                    methyl = aln if aln.has_tag('MM') and aln.has_tag('ML') else None
+                else:
+                    methyl = self.extract_methylation(aln)
+                return (aln.qname, aln.query_sequence, aln.qual if with_quality else '', aln.is_supplementary, methyl)
             # we reached the end of file
             except StopIteration:
                 return ('', '', '', False, None)

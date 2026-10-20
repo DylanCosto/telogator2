@@ -125,8 +125,13 @@ def test_default_payload_and_decode_after_close(inputs, format_index, with_quali
     assert [read[3] for read in eager_reads][:4] == [False, False, True, False]
     for value, other in zip(eager_reads, deferred_reads):
         assert value[:4] == other[:4]
-        assert value[4] == deferred.extract_methylation(other[4])
+        if other[4] is None:
+            assert value[4] is None
+        else:
+            assert value[4] == deferred.extract_methylation(other[4])
     assert all(read[4] is None for read in eager_reads[4:7])
+    # Untagged, MM-only and ML-only records must not retain an alignment.
+    assert all(read[4] is None for read in deferred_reads[4:7])
 
 
 @pytest.mark.parametrize('processes', [1, 2, 4])
@@ -156,7 +161,7 @@ def test_only_selected_alignments_decoded(inputs, tmp_path, monkeypatch, process
     monkeypatch.setattr(TG_Reader, 'extract_methylation', observe)
     extract_telomere_reads([inputs[0], inputs[2]], str(tmp_path / 'out.gz'),
                            KMER, REV_KMER, MIN_HITS, num_processes=processes)
-    assert decoded_names == ['forward', 'reverse', 'secondary', 'no-tags', 'mm-only', 'ml-only']
+    assert decoded_names == ['forward', 'reverse', 'secondary']
 
 
 @pytest.mark.parametrize('processes', [1, 2, 4])
@@ -204,3 +209,28 @@ def test_alignment_queue_remains_bounded(tmp_path, monkeypatch, processes):
                            MIN_HITS, num_processes=processes)
     assert max(count for count, _ in peaks) == 2 * processes
     assert max(count for _, count in peaks) == 2 * processes * 256
+
+
+@pytest.mark.parametrize('processes', [2, 4])
+def test_missing_tags_do_not_retain_alignments(tmp_path, monkeypatch, processes):
+    from collections import deque
+    from source import tg_reader
+    observed_batches = []
+    class ObservedQueue(deque):
+        def append(self, item):
+            assert all(methyl is None for methyl in item[1])
+            observed_batches.append(len(item[1]))
+            super().append(item)
+    monkeypatch.setattr(tg_reader, 'deque', ObservedQueue)
+    tag_cases = ['none', 'mm_only', 'ml_only']
+    path = write_alignments(tmp_path / 'missing-tags.bam',
+                            (alignment(f'read-{i}', SELECTED if i % 137 == 0 else REJECTED,
+                                       tags=tag_cases[i % len(tag_cases)]) for i in range(2311)))
+    expected, expected_bytes = eager_reference([path], '')
+    output = str(tmp_path / 'out.gz')
+    actual = extract_telomere_reads([path], output, KMER, REV_KMER, MIN_HITS,
+                                    num_processes=processes)
+    assert actual == expected
+    assert actual[7:] == ([], {})
+    assert gzip.open(output, 'rb').read() == expected_bytes
+    assert sum(observed_batches) == 2311
